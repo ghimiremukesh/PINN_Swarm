@@ -2,3 +2,5 @@ __pycache__/
 
 .idea/
 
+experiment_scripts/logs/
+

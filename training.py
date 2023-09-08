@@ -9,6 +9,7 @@ import time
 import numpy as np
 import os
 import shutil
+from lbfgsnew import LBFGSNew
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -19,12 +20,18 @@ def train(model, train_dataloader, epochs, lr, steps_til_summary, epochs_til_che
           validation_fn=None, start_epoch=0):
 
     optim = torch.optim.Adam(lr=lr, params=model.parameters())
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', factor=0.9, verbose=True, min_lr=1e-6,
+    #                                                        patience=1000)
+
+    # optim = torch.optim.SGD(lr=lr, params=model.parameters())
 
     # copy settings from Raissi et al. (2019) and here
     # https://github.com/maziarraissi/PINNs
     if use_lbfgs:
-        optim = torch.optim.LBFGS(lr=lr, params=model.parameters(), max_iter=50000, max_eval=50000,
-                                  history_size=50, line_search_fn='strong_wolfe')
+        # optim = torch.optim.LBFGS(lr=1, params=model.parameters(), max_iter=50000, max_eval=50000,
+        #                           history_size=50, line_search_fn='strong_wolfe')
+        optim = LBFGSNew(model.parameters(), history_size=7, max_iter=100, line_search_fn=True, batch_mode=True,
+                         cost_use_gradient=True)
 
     # Load the checkpoint if required
     if start_epoch > 0:
@@ -53,101 +60,123 @@ def train(model, train_dataloader, epochs, lr, steps_til_summary, epochs_til_che
     writer = SummaryWriter(summaries_dir)
 
     total_steps = 0
-    with tqdm(total=len(train_dataloader) * epochs) as pbar:
+    with tqdm(total=len(train_dataloader) * epochs * 100) as pbar:
         train_losses = []
         for epoch in range(start_epoch, epochs):
-            if not epoch % epochs_til_checkpoint and epoch:
-                # Saving the optimizer state is important to produce consistent results
-                checkpoint = {
-                    'epoch': epoch,
-                    'model': model.state_dict(),
-                    'optimizer': optim.state_dict()}
-                torch.save(checkpoint,
-                           os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % epoch))
-                # torch.save(model.state_dict(),
-                #            os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % epoch))
-                np.savetxt(os.path.join(checkpoints_dir, 'train_losses_epoch_%04d.txt' % epoch),
-                           np.array(train_losses))
-                if validation_fn is not None:
-                    validation_fn(model, checkpoints_dir, epoch)
+            for _ in range(100):
 
-            for step, (model_input, gt) in enumerate(train_dataloader):
-                start_time = time.time()
+                # if epoch == 10001:
+                #     optim.param_groups[0]['lr'] = 1e-3
 
-                model_input = {key: value.to(device) for key, value in model_input.items()}
-                gt = {key: value.to(device) for key, value in gt.items()}
+                if not epoch % epochs_til_checkpoint and epoch:
+                    # Saving the optimizer state is important to produce consistent results
+                    checkpoint = {
+                        'epoch': epoch,
+                        'model': model.state_dict(),
+                        'optimizer': optim.state_dict()}
+                    torch.save(checkpoint,
+                               os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % epoch))
+                    # torch.save(model.state_dict(),
+                    #            os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % epoch))
+                    np.savetxt(os.path.join(checkpoints_dir, 'train_losses_epoch_%04d.txt' % epoch),
+                               np.array(train_losses))
+                    if validation_fn is not None:
+                        validation_fn(model, checkpoints_dir, epoch)
 
-                if double_precision:
-                    model_input = {key: value.double() for key, value in model_input.items()}
-                    gt = {key: value.double() for key, value in gt.items()}
+                for step, (model_input, gt) in enumerate(train_dataloader):
+                    start_time = time.time()
 
-                if use_lbfgs:
-                    def closure():
-                        optim.zero_grad()
-                        model_output = model(model_input)
-                        losses = loss_fn(model_output, gt)
-                        train_loss = 0.
-                        for loss_name, loss in losses.items():
-                            train_loss += loss.mean()
-                        train_loss.backward()
-                        return train_loss
-                    optim.step(closure)
+                    model_input = {key: value.to(device) for key, value in model_input.items()}
+                    gt = {key: value.to(device) for key, value in gt.items()}
 
-                model_output = model(model_input)
-                losses = loss_fn(model_output, gt)
+                    if double_precision:
+                        model_input = {key: value.double() for key, value in model_input.items()}
+                        gt = {key: value.double() for key, value in gt.items()}
 
-                # import ipdb; ipdb.set_trace()
+                    if use_lbfgs:
+                        def closure():
+                            optim.zero_grad()
+                            model_output = model(model_input)
+                            losses = loss_fn(model_output, gt)
+                            train_loss = 0.
+                            for loss_name, loss in losses.items():
+                                train_loss += loss.mean()
+                            train_loss.backward()
+                            return train_loss
+                        optim.step(closure)
 
-                train_loss = 0.
-                for loss_name, loss in losses.items():
-                    single_loss = loss.mean()
+                    model_output = model(model_input)
+                    losses = loss_fn(model_output, gt)
 
-                    if loss_schedules is not None and loss_name in loss_schedules:
-                        writer.add_scalar(loss_name + "_weight", loss_schedules[loss_name](total_steps), total_steps)
-                        single_loss *= loss_schedules[loss_name](total_steps)
+                    # import ipdb; ipdb.set_trace()
 
-                    writer.add_scalar(loss_name, single_loss, total_steps)
-                    train_loss += single_loss
+                    train_loss = 0.
+                    for loss_name, loss in losses.items():
+                        single_loss = loss.mean()
 
-                train_losses.append(train_loss.item())
-                writer.add_scalar("total_train_loss", train_loss, total_steps)
-
-                if not total_steps % steps_til_summary:
-                    torch.save(model.state_dict(),
-                               os.path.join(checkpoints_dir, 'model_current.pth'))
-                    # summary_fn(model, model_input, gt, model_output, writer, total_steps)
-
-                if not use_lbfgs:
-                    optim.zero_grad()
-                    train_loss.backward()
-
-                    if clip_grad:
-                        if isinstance(clip_grad, bool):
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
+                        if loss_name == 'dirichlet':
+                            boundary_loss = single_loss
+                        elif loss_name == 'neumann':
+                            costate_loss = single_loss
                         else:
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad)
+                            pde_loss = single_loss
 
-                    optim.step()
 
-                pbar.update(1)
+                        if loss_schedules is not None and loss_name in loss_schedules:
+                            writer.add_scalar(loss_name + "_weight", loss_schedules[loss_name](total_steps), total_steps)
+                            single_loss *= loss_schedules[loss_name](total_steps)
 
-                if not total_steps % steps_til_summary:
-                    tqdm.write("Epoch %d, Total loss %0.6f, iteration time %0.6f" % (epoch, train_loss, time.time() - start_time))
+                        writer.add_scalar(loss_name, single_loss, total_steps)
+                        train_loss += single_loss
 
-                    if val_dataloader is not None:
-                        print("Running validation set...")
-                        model.eval()
-                        with torch.no_grad():
-                            val_losses = []
-                            for (model_input, gt) in val_dataloader:
-                                model_output = model(model_input)
-                                val_loss = loss_fn(model_output, gt)
-                                val_losses.append(val_loss)
+                    train_losses.append(train_loss.item())
+                    writer.add_scalar("total_train_loss", train_loss, total_steps)
 
-                            writer.add_scalar("val_loss", np.mean(val_losses), total_steps)
-                        model.train()
+                    if not total_steps % steps_til_summary:
+                        torch.save(model.state_dict(),
+                                   os.path.join(checkpoints_dir, 'model_current.pth'))
+                        # summary_fn(model, model_input, gt, model_output, writer, total_steps)
 
-                total_steps += 1
+                    if not use_lbfgs:
+                        optim.zero_grad()
+                        train_loss.backward()
+
+                        if clip_grad:
+                            if isinstance(clip_grad, bool):
+                                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
+                            else:
+                                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad)
+
+                        optim.step()
+                        # scheduler.step(train_loss)
+
+
+                    pbar.update(1)
+
+                    if not total_steps % steps_til_summary:
+                        try:
+                            tqdm.write("Epoch %d, Total loss %0.6f, boundary loss %0.3f, costate_loss %0.6f, pde loss %0.3f iteration time %0.6f" %
+                                       (epoch, train_loss, boundary_loss, costate_loss, pde_loss,  time.time() - start_time))
+                        except:
+                            tqdm.write(
+                                "Epoch %d, Total loss %0.6f, boundary loss %0.3f, pde loss %0.3f iteration time %0.6f" %
+                                (epoch, train_loss, boundary_loss, pde_loss, time.time() - start_time))
+
+
+                        if val_dataloader is not None:
+                            print("Running validation set...")
+                            model.eval()
+                            with torch.no_grad():
+                                val_losses = []
+                                for (model_input, gt) in val_dataloader:
+                                    model_output = model(model_input)
+                                    val_loss = loss_fn(model_output, gt)
+                                    val_losses.append(val_loss)
+
+                                writer.add_scalar("val_loss", np.mean(val_losses), total_steps)
+                            model.train()
+
+                    total_steps += 1
 
         torch.save(model.state_dict(),
                    os.path.join(checkpoints_dir, 'model_final.pth'))

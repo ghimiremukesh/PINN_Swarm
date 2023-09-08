@@ -29,6 +29,18 @@ class Sine(nn.Module):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
         return torch.sin(30 * input)
 
+class Relu_apative(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        param = torch.tensor(0.1, requires_grad=True)
+        self.param = nn.Parameter(param)
+
+    def forward(self, input):
+        return torch.nn.ReLU(inplace=True)(10 * self.param * input)
+
+
+
 class Sine_output(nn.Module):
     def __init(self):
         super().__init__()
@@ -58,6 +70,10 @@ class FCBlock(nn.Module):
 
         self.first_layer_init = None
 
+        # params = torch.tensor(0.1, requires_grad=True)
+        # self.param = nn.Parameter(params)
+        # self.num_hidden_layers = num_hidden_layers
+
         # Dictionary that maps nonlinearity name to the respective function, initialization, and, if applicable,
         # special first-layer initialization scheme
         nls_and_inits = {'sine':(Sine(), sine_init, first_layer_sine_init),
@@ -66,9 +82,13 @@ class FCBlock(nn.Module):
                          'tanh':(nn.Tanh(), init_weights_xavier, None),
                          'selu':(nn.SELU(inplace=True), init_weights_selu, None),
                          'softplus':(nn.Softplus(), init_weights_normal, None),
-                         'elu':(nn.ELU(inplace=True), init_weights_elu, None)}
+                         'elu':(nn.ELU(inplace=True), init_weights_elu, None),
+                         'gelu':(nn.GELU(), init_weights_trunc_normal, None)}
 
         nl, nl_weight_init, first_layer_init = nls_and_inits[nonlinearity]
+
+        self.nl = nl
+
 
         if weight_init is not None:  # Overwrite weight init if passed
             self.weight_init = weight_init
@@ -89,7 +109,7 @@ class FCBlock(nn.Module):
             self.net.append(nn.Sequential(BatchLinear(hidden_features, out_features)))
         else:
             self.net.append(nn.Sequential(
-                BatchLinear(hidden_features, out_features), nl
+                BatchLinear(hidden_features, out_features)
             ))
 
         self.net = nn.Sequential(*self.net)
@@ -108,6 +128,14 @@ class FCBlock(nn.Module):
             params = OrderedDict(self.named_parameters())
 
         output = self.net(coords)
+        # input = coords
+        # for i in range(self.num_hidden_layers+1):
+        #     output = self.net[i](input)
+        #     output = self.nl(10 * self.param * output)
+        #     input = output
+        #
+        # output = self.net[-1](input)
+
         return output
 
 

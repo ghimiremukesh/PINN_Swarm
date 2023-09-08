@@ -26,10 +26,10 @@ p.add_argument('--experiment_name', type=str, required=False,
 p.add_argument('--batch_size', type=int, default=16)
 p.add_argument('--lr', type=float, default=2e-5, help='learning rate. default=2e-5')
 
-p.add_argument('--num_epochs', type=int, default=10,
+p.add_argument('--num_epochs', type=int, default=110000,
                help='Number of epochs to train for.')
 
-p.add_argument('--epochs_til_ckpt', type=int, default=100,
+p.add_argument('--epochs_til_ckpt', type=int, default=1000,
                help='Time interval in seconds until checkpoint is saved.')
 p.add_argument('--steps_til_summary', type=int, default=100,
                help='Time interval in seconds until tensorboard summary is saved.')
@@ -38,13 +38,13 @@ p.add_argument('--model', type=str, default='relu', required=False, choices=['si
 p.add_argument('--mode', type=str, default='mlp', required=False, choices=['mlp', 'rbf', 'pinn'],
                help='Whether to use uniform velocity parameter')
 p.add_argument('--tMin', type=float, default=0.0, required=False, help='Start time of the simulation')
-p.add_argument('--tMax', type=float, default=1.0, required=False, help='End time of the simulation')
+p.add_argument('--tMax', type=float, default=2.5, required=False, help='End time of the simulation')
 p.add_argument('--num_hl', type=int, default=3, required=False, help='The number of hidden layers')
 p.add_argument('--num_nl', type=int, default=32, required=False, help='Number of neurons per hidden layer.')
-p.add_argument('--pretrain_iters', type=int, default=5, required=False, help='Number of pretrain iterations')
+p.add_argument('--pretrain_iters', type=int, default=10000, required=False, help='Number of pretrain iterations')
 p.add_argument('--counter_start', type=int, default=-1, required=False, help='Defines the initial time for the curriculum training')
-p.add_argument('--counter_end', type=int, default=10, required=False, help='Defines the linear step for curriculum training starting from the initial time')
-p.add_argument('--num_src_samples', type=int, default=1000, required=False, help='Number of source samples at each time step')
+p.add_argument('--counter_end', type=int, default=100000, required=False, help='Defines the linear step for curriculum training starting from the initial time')
+p.add_argument('--num_src_samples', type=int, default=10000, required=False, help='Number of source samples at each time step')
 
 
 p.add_argument('--clip_grad', default=0.0, type=float, help='Clip gradient.')
